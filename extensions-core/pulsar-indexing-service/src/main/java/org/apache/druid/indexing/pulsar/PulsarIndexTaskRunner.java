@@ -35,15 +35,12 @@ import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecor
 import org.apache.druid.indexing.seekablestream.common.OrderedSequenceNumber;
 import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
-import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.druid.segment.realtime.appenderator.AppenderatorsManager;
 import org.apache.druid.segment.realtime.firehose.ChatHandlerProvider;
 import org.apache.druid.server.security.AuthorizerMapper;
 import org.apache.druid.utils.CircularBuffer;
-import org.apache.druid.utils.CollectionUtils;
-import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
-import org.apache.kafka.common.TopicPartition;
+import org.apache.pulsar.client.api.PulsarClientException;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -56,17 +53,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Pulsar indexing task runner supporting incremental segments publishing
  */
-public class IncrementalPublishingPulsarIndexTaskRunner extends SeekableStreamIndexTaskRunner<Integer, Long>
+public class PulsarIndexTaskRunner extends SeekableStreamIndexTaskRunner<Integer, Long>
 {
-  private static final EmittingLogger log = new EmittingLogger(IncrementalPublishingPulsarIndexTaskRunner.class);
+  private static final EmittingLogger log = new EmittingLogger(PulsarIndexTaskRunner.class);
   private final PulsarIndexTask task;
 
-  IncrementalPublishingPulsarIndexTaskRunner(
+  PulsarIndexTaskRunner(
       PulsarIndexTask task,
       @Nullable InputRowParser<ByteBuffer> parser,
       AuthorizerMapper authorizerMapper,
@@ -93,7 +89,7 @@ public class IncrementalPublishingPulsarIndexTaskRunner extends SeekableStreamIn
   @Override
   protected Long getNextStartOffset(@NotNull Long sequenceNumber)
   {
-    return sequenceNumber + 1;
+    return sequenceNumber;
   }
 
   @Nonnull
@@ -101,21 +97,20 @@ public class IncrementalPublishingPulsarIndexTaskRunner extends SeekableStreamIn
   protected List<OrderedPartitionableRecord<Integer, Long>> getRecords(
       RecordSupplier<Integer, Long> recordSupplier,
       TaskToolbox toolbox
-  ) throws Exception
+  ) throws IOException, InterruptedException
   {
-    // Handles OffsetOutOfRangeException, which is thrown if the seeked-to
+    // Handles PulsarClientException, which is thrown if the seeked-to
     // offset is not present in the topic-partition. This can happen if we're asking a task to read from data
     // that has not been written yet (which is totally legitimate). So let's wait for it to show up.
-    List<OrderedPartitionableRecord<Integer, Long>> records = new ArrayList<>();
-    try {
-      records = recordSupplier.poll(task.getIOConfig().getPollTimeout());
-    }
-    catch (OffsetOutOfRangeException e) {
-      log.warn("OffsetOutOfRangeException with message [%s]", e.getMessage());
-      possiblyResetOffsetsOrWait(e.offsetOutOfRangePartitions(), recordSupplier, toolbox);
+    PulsarClientException previousSeekFailure = ((PulsarRecordSupplierTask) recordSupplier).getPreviousSeekFailure();
+    if (previousSeekFailure == null) {
+      return recordSupplier.poll(task.getIOConfig().getPollTimeout());
     }
 
-    return records;
+    log.warn("PulsarClientException with message [%s]", previousSeekFailure.getMessage());
+    possiblyResetOffsetsOrWait(recordSupplier, toolbox);
+
+    return new ArrayList<>();
   }
 
   @Override
@@ -133,58 +128,18 @@ public class IncrementalPublishingPulsarIndexTaskRunner extends SeekableStreamIn
   }
 
   private void possiblyResetOffsetsOrWait(
-      Map<TopicPartition, Long> outOfRangePartitions,
       RecordSupplier<Integer, Long> recordSupplier,
       TaskToolbox taskToolbox
   ) throws InterruptedException, IOException
   {
-    final Map<TopicPartition, Long> resetPartitions = new HashMap<>();
-    boolean doReset = false;
+    final Map<StreamPartition<Integer>, Long> resetPartitions = new HashMap<>();
     if (task.getTuningConfig().isResetOffsetAutomatically()) {
-      for (Map.Entry<TopicPartition, Long> outOfRangePartition : outOfRangePartitions.entrySet()) {
-        final TopicPartition topicPartition = outOfRangePartition.getKey();
-        final long nextOffset = outOfRangePartition.getValue();
-        // seek to the beginning to get the least available offset
-        StreamPartition<Integer> streamPartition = StreamPartition.of(
-            topicPartition.topic(),
-            topicPartition.partition()
-        );
-        final Long leastAvailableOffset = recordSupplier.getEarliestSequenceNumber(streamPartition);
-        if (leastAvailableOffset == null) {
-          throw new ISE(
-              "got null sequence number for partition[%s] when fetching from pulsar!",
-              topicPartition.partition()
-          );
-        }
-        // reset the seek
-        recordSupplier.seek(streamPartition, nextOffset);
-        // Reset consumer offset if resetOffsetAutomatically is set to true
-        // and the current message offset in the pulsar partition is more than the
-        // next message offset that we are trying to fetch
-        if (leastAvailableOffset > nextOffset) {
-          doReset = true;
-          resetPartitions.put(topicPartition, nextOffset);
-        }
+      for (StreamPartition<Integer> p : recordSupplier.getAssignment()) {
+        final Long leastAvailableOffset = recordSupplier.getEarliestSequenceNumber(p);
+        recordSupplier.seek(p, leastAvailableOffset);
+        resetPartitions.put(p, leastAvailableOffset);
       }
-    }
-
-    if (doReset) {
-      sendResetRequestAndWait(CollectionUtils.mapKeys(resetPartitions, streamPartition -> StreamPartition.of(
-          streamPartition.topic(),
-          streamPartition.partition()
-      )), taskToolbox);
-    } else {
-      log.warn("Retrying in %dms", task.getPollRetryMs());
-      pollRetryLock.lockInterruptibly();
-      try {
-        long nanos = TimeUnit.MILLISECONDS.toNanos(task.getPollRetryMs());
-        while (nanos > 0L && !pauseRequested && !stopRequested.get()) {
-          nanos = isAwaitingRetry.awaitNanos(nanos);
-        }
-      }
-      finally {
-        pollRetryLock.unlock();
-      }
+      sendResetRequestAndWait(resetPartitions, taskToolbox);
     }
   }
 

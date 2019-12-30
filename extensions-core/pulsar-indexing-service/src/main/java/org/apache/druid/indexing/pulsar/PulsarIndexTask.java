@@ -23,28 +23,23 @@ import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
 import org.apache.druid.indexing.common.task.TaskResource;
+import org.apache.druid.indexing.pulsar.supervisor.PulsarSupervisorIOConfig;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
 import org.apache.druid.segment.indexing.DataSchema;
+import org.apache.druid.segment.indexing.TuningConfig;
 import org.apache.druid.segment.realtime.appenderator.AppenderatorsManager;
 import org.apache.druid.segment.realtime.firehose.ChatHandlerProvider;
 import org.apache.druid.server.security.AuthorizerMapper;
 
-import java.util.HashMap;
 import java.util.Map;
 
 public class PulsarIndexTask extends SeekableStreamIndexTask<Integer, Long>
 {
   private static final String TYPE = "index_pulsar";
-
-  private final ObjectMapper configMapper;
-
-  // This value can be tuned in some tests
-  private long pollRetryMs = 30000;
 
   @JsonCreator
   public PulsarIndexTask(
@@ -74,7 +69,6 @@ public class PulsarIndexTask extends SeekableStreamIndexTask<Integer, Long>
         getFormattedGroupId(dataSchema.getDataSource(), TYPE),
         appenderatorsManager
     );
-    this.configMapper = configMapper;
 
     Preconditions.checkArgument(
         ioConfig.getStartSequenceNumbers().getExclusivePartitions().isEmpty(),
@@ -82,22 +76,11 @@ public class PulsarIndexTask extends SeekableStreamIndexTask<Integer, Long>
     );
   }
 
-  long getPollRetryMs()
-  {
-    return pollRetryMs;
-  }
-
-  @VisibleForTesting
-  void setPollRetryMs(long retryMs)
-  {
-    this.pollRetryMs = retryMs;
-  }
-
   @Override
   protected SeekableStreamIndexTaskRunner<Integer, Long> createTaskRunner()
   {
     //noinspection unchecked
-    return new IncrementalPublishingPulsarIndexTaskRunner(
+    return new PulsarIndexTaskRunner(
         this,
         dataSchema.getParser(),
         authorizerMapper,
@@ -110,28 +93,18 @@ public class PulsarIndexTask extends SeekableStreamIndexTask<Integer, Long>
   }
 
   @Override
-  protected PulsarRecordSupplier newTaskRecordSupplier()
+  protected PulsarRecordSupplierTask newTaskRecordSupplier()
   {
-    ClassLoader currCtxCl = Thread.currentThread().getContextClassLoader();
-    try {
-      Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
+    String serviceUrl = (String) getIOConfig().getConsumerProperties()
+                                              .get(PulsarSupervisorIOConfig.SERVICE_URL);
 
-      final Map<String, Object> props = new HashMap<>(((PulsarIndexTaskIOConfig) super.ioConfig).getConsumerProperties());
+    int maxRowsInMemory = TuningConfig.DEFAULT_MAX_ROWS_IN_MEMORY;
 
-      props.put("auto.offset.reset", "none");
-
-      return new PulsarRecordSupplier(props, configMapper);
+    if (tuningConfig != null) {
+      maxRowsInMemory = tuningConfig.getMaxRowsInMemory();
     }
-    finally {
-      Thread.currentThread().setContextClassLoader(currCtxCl);
-    }
-  }
 
-  @Override
-  @JsonProperty
-  public PulsarIndexTaskTuningConfig getTuningConfig()
-  {
-    return (PulsarIndexTaskTuningConfig) super.getTuningConfig();
+    return new PulsarRecordSupplierTask(serviceUrl, getId(), maxRowsInMemory);
   }
 
   @Override

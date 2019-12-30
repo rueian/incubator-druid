@@ -21,6 +21,7 @@ package org.apache.druid.indexing.pulsar;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonTypeName;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskTuningConfig;
 import org.apache.druid.segment.IndexSpec;
 import org.apache.druid.segment.writeout.SegmentWriteOutMediumFactory;
@@ -29,6 +30,7 @@ import org.joda.time.Period;
 import javax.annotation.Nullable;
 import java.io.File;
 
+@JsonTypeName("PulsarTuningConfig")
 public class PulsarIndexTaskTuningConfig extends SeekableStreamIndexTaskTuningConfig
 {
   @JsonCreator

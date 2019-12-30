@@ -28,6 +28,7 @@ import org.apache.druid.indexing.overlord.sampler.SamplerConfig;
 import org.apache.druid.indexing.pulsar.supervisor.PulsarSupervisorIOConfig;
 import org.apache.druid.indexing.pulsar.supervisor.PulsarSupervisorSpec;
 import org.apache.druid.indexing.seekablestream.SeekableStreamSamplerSpec;
+import org.apache.druid.segment.indexing.TuningConfig;
 
 import javax.annotation.Nullable;
 import java.util.HashMap;
@@ -35,7 +36,6 @@ import java.util.Map;
 
 public class PulsarSamplerSpec extends SeekableStreamSamplerSpec
 {
-  private final ObjectMapper objectMapper;
 
   @JsonCreator
   public PulsarSamplerSpec(
@@ -46,27 +46,21 @@ public class PulsarSamplerSpec extends SeekableStreamSamplerSpec
   )
   {
     super(ingestionSpec, samplerConfig, inputSourceSampler);
-
-    this.objectMapper = objectMapper;
   }
 
   @Override
-  protected PulsarRecordSupplier createRecordSupplier()
+  protected PulsarRecordSupplierTask createRecordSupplier()
   {
-    ClassLoader currCtxCl = Thread.currentThread().getContextClassLoader();
-    try {
-      Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
+    final Map<String, Object> props = new HashMap<>(((PulsarSupervisorIOConfig) ioConfig).getConsumerProperties());
 
-      final Map<String, Object> props = new HashMap<>(((PulsarSupervisorIOConfig) ioConfig).getConsumerProperties());
+    String serviceUrl = (String) props.get(PulsarSupervisorIOConfig.SERVICE_URL);
 
-      props.put("enable.auto.commit", "false");
-      props.put("auto.offset.reset", "none");
-      props.put("request.timeout.ms", Integer.toString(samplerConfig.getTimeoutMs()));
+    int maxRowsInMemory = TuningConfig.DEFAULT_MAX_ROWS_IN_MEMORY;
 
-      return new PulsarRecordSupplier(props, objectMapper);
+    if (tuningConfig != null) {
+      maxRowsInMemory = tuningConfig.convertToTaskTuningConfig().getMaxRowsInMemory();
     }
-    finally {
-      Thread.currentThread().setContextClassLoader(currCtxCl);
-    }
+
+    return new PulsarRecordSupplierTask(serviceUrl, "druid-pulsar-indexing-sampler", maxRowsInMemory);
   }
 }

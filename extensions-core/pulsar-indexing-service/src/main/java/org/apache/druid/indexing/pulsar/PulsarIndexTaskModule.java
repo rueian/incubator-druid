@@ -44,7 +44,6 @@ public class PulsarIndexTaskModule implements DruidModule
                 new NamedType(PulsarIndexTask.class, "index_pulsar"),
                 new NamedType(PulsarDataSourceMetadata.class, "pulsar"),
                 new NamedType(PulsarIndexTaskIOConfig.class, "pulsar"),
-                new NamedType(PulsarIndexTaskTuningConfig.class, "pulsar"),
                 new NamedType(PulsarSupervisorTuningConfig.class, "pulsar"),
                 new NamedType(PulsarSupervisorSpec.class, "pulsar"),
                 new NamedType(PulsarSamplerSpec.class, "pulsar")

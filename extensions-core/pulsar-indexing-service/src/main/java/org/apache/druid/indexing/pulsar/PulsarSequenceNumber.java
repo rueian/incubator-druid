@@ -20,6 +20,8 @@
 package org.apache.druid.indexing.pulsar;
 
 import org.apache.druid.indexing.seekablestream.common.OrderedSequenceNumber;
+import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.util.MessageIdUtils;
 
 import javax.validation.constraints.NotNull;
 
@@ -27,6 +29,9 @@ import javax.validation.constraints.NotNull;
 @SuppressWarnings("ComparableImplementedButEqualsNotOverridden")
 public class PulsarSequenceNumber extends OrderedSequenceNumber<Long>
 {
+  public static final Long LATEST_OFFSET = Long.MAX_VALUE;
+  public static final Long EARLIEST_OFFSET = -1L;
+
   private PulsarSequenceNumber(Long sequenceNumber)
   {
     super(sequenceNumber, false);
@@ -37,6 +42,28 @@ public class PulsarSequenceNumber extends OrderedSequenceNumber<Long>
     return new PulsarSequenceNumber(sequenceNumber);
   }
 
+  public static PulsarSequenceNumber of(MessageId id)
+  {
+    if (id.equals(MessageId.earliest)) {
+      return new PulsarSequenceNumber(EARLIEST_OFFSET);
+    }
+    if (id.equals(MessageId.latest)) {
+      return new PulsarSequenceNumber(LATEST_OFFSET);
+    }
+    return new PulsarSequenceNumber(MessageIdUtils.getOffset(id));
+  }
+
+  public MessageId getMessageId()
+  {
+    if (LATEST_OFFSET.equals(this.get())) {
+      return MessageId.latest;
+    }
+    if (EARLIEST_OFFSET.equals(this.get())) {
+      return MessageId.earliest;
+    }
+    return MessageIdUtils.getMessageId(this.get());
+  }
+
   @Override
   public int compareTo(
       @NotNull OrderedSequenceNumber<Long> o
@@ -44,5 +71,4 @@ public class PulsarSequenceNumber extends OrderedSequenceNumber<Long>
   {
     return this.get().compareTo(o.get());
   }
-
 }

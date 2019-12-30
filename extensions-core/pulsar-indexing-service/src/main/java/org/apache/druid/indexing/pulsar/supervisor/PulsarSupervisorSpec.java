@@ -41,7 +41,7 @@ import java.util.Map;
 
 public class PulsarSupervisorSpec extends SeekableStreamSupervisorSpec
 {
-  private static final String TASK_TYPE = "pulsar";
+  private static final String SUPERVISOR_TYPE = "pulsar";
 
   @JsonCreator
   public PulsarSupervisorSpec(
@@ -86,17 +86,6 @@ public class PulsarSupervisorSpec extends SeekableStreamSupervisorSpec
     );
   }
 
-  @Override
-  public String getType()
-  {
-    return TASK_TYPE;
-  }
-
-  @Override
-  public String getSource()
-  {
-    return getIoConfig() != null ? getIoConfig().getTopic() : null;
-  }
 
   @Override
   public Supervisor createSupervisor()
@@ -110,6 +99,30 @@ public class PulsarSupervisorSpec extends SeekableStreamSupervisorSpec
         this,
         rowIngestionMetersFactory
     );
+  }
+
+  @Override
+  public String getType()
+  {
+    return SUPERVISOR_TYPE;
+  }
+
+  @Override
+  public String getSource()
+  {
+    return getIoConfig() != null ? getIoConfig().getStream() : null;
+  }
+
+  @Override
+  public String toString()
+  {
+    return "PulsarSupervisorSpec{" +
+           "dataSchema=" + getDataSchema() +
+           ", tuningConfig=" + getTuningConfig() +
+           ", ioConfig=" + getIoConfig() +
+           ", suspended=" + isSuspended() +
+           ", context=" + getContext() +
+           '}';
   }
 
   @Override
@@ -155,17 +168,5 @@ public class PulsarSupervisorSpec extends SeekableStreamSupervisorSpec
         rowIngestionMetersFactory,
         supervisorStateManagerConfig
     );
-  }
-
-  @Override
-  public String toString()
-  {
-    return "PulsarSupervisorSpec{" +
-           "dataSchema=" + getDataSchema() +
-           ", tuningConfig=" + getTuningConfig() +
-           ", ioConfig=" + getIoConfig() +
-           ", context=" + getContext() +
-           ", suspend=" + isSuspended() +
-           '}';
   }
 }

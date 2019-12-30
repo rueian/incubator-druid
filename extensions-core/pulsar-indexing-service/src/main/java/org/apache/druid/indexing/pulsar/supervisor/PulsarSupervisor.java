@@ -37,7 +37,7 @@ import org.apache.druid.indexing.pulsar.PulsarIndexTask;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskClientFactory;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskIOConfig;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskTuningConfig;
-import org.apache.druid.indexing.pulsar.PulsarRecordSupplier;
+import org.apache.druid.indexing.pulsar.PulsarRecordSupplierSupervisor;
 import org.apache.druid.indexing.pulsar.PulsarSequenceNumber;
 import org.apache.druid.indexing.seekablestream.SeekableStreamEndSequenceNumbers;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
@@ -127,7 +127,9 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<Integer, Long>
   @Override
   protected RecordSupplier<Integer, Long> setupRecordSupplier()
   {
-    return new PulsarRecordSupplier(spec.getIoConfig().getConsumerProperties(), sortingMapper);
+    String serviceUrl = (String) getIoConfig().getConsumerProperties()
+                                              .get(PulsarSupervisorIOConfig.SERVICE_URL);
+    return new PulsarRecordSupplierSupervisor(serviceUrl);
   }
 
   @Override
@@ -240,10 +242,6 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<Integer, Long>
     final String checkpoints = sortingMapper.writerFor(CHECKPOINTS_TYPE_REF).writeValueAsString(sequenceOffsets);
     final Map<String, Object> context = createBaseTaskContexts();
     context.put(CHECKPOINTS_CTX_KEY, checkpoints);
-    // Pulsar index task always uses incremental handoff since 0.16.0.
-    // The below is for the compatibility when you want to downgrade your cluster to something earlier than 0.16.0.
-    // Pulsar index task will pick up LegacyPulsarIndexTaskRunner without the below configuration.
-    context.put("IS_INCREMENTAL_HANDOFF_SUPPORTED", true);
 
     List<SeekableStreamIndexTask<Integer, Long>> taskList = new ArrayList<>();
     for (int i = 0; i < replicas; i++) {
