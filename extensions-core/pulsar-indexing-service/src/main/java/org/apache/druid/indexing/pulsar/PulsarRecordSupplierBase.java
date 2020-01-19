@@ -101,16 +101,6 @@ public abstract class PulsarRecordSupplierBase implements RecordSupplier<Integer
     }
   }
 
-  private void workaoundToSeekBug(Container reader) throws InterruptedException
-  {
-    for (int i = 1; i <= 10; i++) {
-      Thread.sleep(i * 100);
-      if (reader.consumer.isConnected()) {
-        break;
-      }
-    }
-  }
-
   public PulsarClientException getPreviousSeekFailure()
   {
     return previousSeekFailure;
@@ -127,7 +117,6 @@ public abstract class PulsarRecordSupplierBase implements RecordSupplier<Integer
     try {
       reader.consumer.seek(PulsarSequenceNumber.of(sequenceNumber).getMessageId());
       setPosition(partition, sequenceNumber);
-      workaoundToSeekBug(reader);
       previousSeekFailure = null;
     }
     catch (PulsarClientException e) {

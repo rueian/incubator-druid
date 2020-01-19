@@ -34,7 +34,7 @@
     </parent>
 
     <properties>
-        <apache.pulsar.version>2.4.2</apache.pulsar.version>
+        <apache.pulsar.version>2.5.0</apache.pulsar.version>
     </properties>
 
     <dependencies>
